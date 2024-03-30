@@ -32,6 +32,8 @@ from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 from pytorch_msssim import ms_ssim,MS_SSIM,SSIM
 from typing import Union, List
 from PIL import Image
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 class LadleNet(nn.Module):
     def __init__(self):
@@ -305,18 +307,17 @@ class Dataset_creat(Dataset):
         IR_dic = os.path.join(self.IR_path, self.filename_IR[idx])
         VI_dic = os.path.join(self.VI_path, self.filename_VI[idx])
             
-        img_IR = io.imread(IR_dic)
+        # img_IR = io.imread(IR_dic)
+        # TODO: Modify the code to read the image using PIL
         
-        if len(img_IR.shape)<3:
-            img_IR = skimage.color.gray2rgb(img_IR)
-            # TODO: Convert the image to float32
-            img_IR = img_IR.astype(np.float32)
-        
-        # TODO: Normalize the image
-        if img_IR.max() > 1.0:  # Assuming the image is not already normalized
-            img_IR /= 65535.0
+        # if len(img_IR.shape)<3:
+        #     img_IR = skimage.color.gray2rgb(img_IR)
+
+        img_IR = Image.open(IR_dic).convert('I').point(lambda i: i * (1.0 / 256)).convert('L')
+        img_IR = Image.merge("RGB", (img_IR, img_IR, img_IR))
   
-        img_VI = io.imread(VI_dic)
+        # img_VI = io.imread(VI_dic)
+        img_VI = Image.open(VI_dic).convert('RGB')
 
         if self.transform != None:
             img_IR = self.transform(img_IR)
@@ -329,7 +330,6 @@ class Dataset_creat(Dataset):
         package = (img_IR,img_VI)
         return package
 
-# def main():
 batch_size = 40
 num_epochs = 30
 learning_rate = 0.1
@@ -354,8 +354,11 @@ train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
-device = torch.device('cuda:0')
-model = LadleNet().to(device)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = LadleNet()
+model = nn.DataParallel(model)
+model.to(device)
+
 loss_msssim = MS_SSIM(data_range=1., size_average=True, channel=3, weights=[0.5, 1., 2., 4., 8.])
 loss_ssim = SSIM(data_range=1., size_average=True, channel=3)
 loss_l1 = nn.L1Loss()
@@ -375,11 +378,13 @@ if not os.path.exists(dir_name):
     os.makedirs(dir_name)
 
 file = open(file_name, "a")
+# TODO: Redirect remove the print statement
 sys.stdout = file
 
 torch.autograd.set_detect_anomaly(True)
 
 for epoch in range(num_epochs):
+    print(f'Epoch {epoch+1}/{num_epochs}')
     start_time = time.time()
 
     model.train()
@@ -389,6 +394,7 @@ for epoch in range(num_epochs):
     l1_loss = 0.0
     
     for i, data in enumerate(train_loader, 0):
+        print(f'Batch {i+1}/{len(train_loader)}')
         ir_inputs, vi_inputs = data
         ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
 
@@ -420,12 +426,20 @@ for epoch in range(num_epochs):
     l1_val = 0.0
     ssim_val = 0.0
 
+    sample_images = []
+    image_count = 0
     with torch.no_grad():
         for i, data in enumerate(val_loader, 0):
+            print(f'Validation Batch {i+1}/{len(val_loader)}')
             ir_inputs_val, vi_inputs_val = data
             ir_inputs_val, vi_inputs_val = ir_inputs_val.to(device), vi_inputs_val.to(device)
 
             outputs_val = model(vi_inputs_val)
+
+            # TODO: Sample the images
+            if i%15 == 0 and image_count < 10:
+                sample_images.append(torch.cat((outputs_val[0:1].cpu().detach(), ir_inputs_val[0:1].cpu().detach()), dim=2))
+                image_count += 1
 
             ssim_val_value = loss_ssim(outputs_val, ir_inputs_val)
             l1_val_value = loss_l1(outputs_val, ir_inputs_val)
@@ -434,6 +448,17 @@ for epoch in range(num_epochs):
             ssim_val += ssim_val_value.item()
             l1_val += l1_val_value.item()
             msssim_val += msssim_val_value.item()
+    
+    # TODO: Unpack and write the images
+    pairs = torch.stack(sample_images)
+    grid = vutils.make_grid(pairs, nrow=10, padding=2, normalize=False, scale_each=False)
+    grid_np = grid.numpy()
+    grid_np = np.transpose(grid_np, (1, 2, 0))
+    grid_np = (grid_np * 255).astype(np.uint8)
+    grid_image = Image.fromarray(grid_np)
+    if not os.path.exists("result/test_images"):
+        os.makedirs("result/test_images")
+    grid_image.save(f"result/test_images/{now}_epoch_{epoch}.png")
 
     avg_ssim_val = ssim_val / len(val_loader)
     avg_msssim_val = msssim_val / len(val_loader)
@@ -444,7 +469,9 @@ for epoch in range(num_epochs):
     if avg_msssim_val > highest_msssim:
         now = datetime.datetime.now().strftime("%Y-%m-%d")
         highest_msssim = avg_msssim_val
-        highest_msssim_save_path = os.path.join("weight/", f"LadleNet_highest_msssim_{now}.pth")
+        highest_msssim_save_path = os.path.join("weight", f"LadleNet_highest_msssim_{now}.pth")
+        if not os.path.exists("weight"):
+            os.makedirs("weight")
         state_dict_lowest_loss = model.state_dict()
         metadata_lowest_loss = {'learning_rate': '0.001',
                                 'batch_size': batch_size,
@@ -459,7 +486,9 @@ for epoch in range(num_epochs):
     
     if (epoch+1) % save_step == 0 or (epoch + 1) == num_epochs:
         now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        save_path = os.path.join("weight/", f"{now}_LadleNet.pth")
+        save_path = os.path.join("weight", f"{now}_LadleNet.pth")
+        if not os.path.exists("weight"):
+            os.makedirs("weight")
         state_dict = model.state_dict()
         metadata = {'learning_rate': '0.001',
                     'batch_size': batch_size,
@@ -484,7 +513,3 @@ for epoch in range(num_epochs):
     print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
 
 file.close()
-
-# if __name__ == '__main__':
-#     main()
-    

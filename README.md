@@ -2,7 +2,7 @@
 - [X] LadleNet Setup
 - [ ] LadleNet Training
 - [ ] Run metrics
-- [ ] LadleNet+ Setup
+- [X] LadleNet+ Setup
 - [ ] LadleNet+ Training
 - [ ] Run metrics
   

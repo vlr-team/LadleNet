@@ -31,8 +31,13 @@ import lpips
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 from pytorch_msssim import ms_ssim,MS_SSIM,SSIM
 from typing import Union, List
-from DeepLabV3s import network
+from DeepLabV3s import network  #downloaded from https://github.com/VainF/DeepLabV3Plus-Pytorch?tab=readme-ov-file
+# also place a .pth file inside DeepLabV3s folder (initially DeepLabV3Plus-Pytorch)
+# https://drive.google.com/file/d/1t7TC8mxQaFECt4jutdq_NMnWxdm6B-Nb/view
 import re
+from PIL import Image
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True  # Added by me to avoid PIL error
 
 class LadleNet_plus(nn.Module):
     def __init__(self):
@@ -126,9 +131,9 @@ class LadleNet_plus(nn.Module):
         return cat_conv(cat.to(device))
     
     def init_deeplab_v3_s(self):
-        model = network.modeling.__dict__['deeplabv3plus_resnet101'](num_classes=19,output_stride=8)
+        model = network.modeling.__dict__['deeplabv3plus_resnet101'](num_classes=19,output_stride=8)        
         
-        model.load_state_dict(torch.load('DeepLabV3s/best_deeplabv3plus_resnet101_cityscapes_os16.pth')['model_state'])
+        model.load_state_dict(torch.load('DeepLabV3s/best_deeplabv3plus_resnet101_cityscapes_os16.pth.tar')['model_state'])
         
         return model
     
@@ -219,12 +224,17 @@ class Dataset_creat(Dataset):
         IR_dic = os.path.join(self.IR_path, self.filename_IR[idx])
         VI_dic = os.path.join(self.VI_path, self.filename_VI[idx])
             
-        img_IR = io.imread(IR_dic)
+        # img_IR = io.imread(IR_dic)
         
-        if len(img_IR.shape)<3:
-            img_IR = skimage.color.gray2rgb(img_IR)
+        # if len(img_IR.shape)<3:
+        #     img_IR = skimage.color.gray2rgb(img_IR)
         
-        img_VI = io.imread(VI_dic)
+        # img_VI = io.imread(VI_dic)
+        
+        img_IR = Image.open(IR_dic).convert('I').point(lambda i: i * (1.0 / 256)).convert('L')
+        img_IR = Image.merge("RGB", (img_IR, img_IR, img_IR))
+  
+        img_VI = Image.open(VI_dic).convert('RGB')
 
         if self.transform != None:
             img_IR = self.transform(img_IR)
@@ -246,8 +256,8 @@ transform_pre = transforms.Compose([transforms.ToTensor()
                                   ,transforms.Resize((300,400))
                                   ,transforms.CenterCrop((192, 256))])
 
-IR = 'Your Path to IR Images'
-VI = 'Your Path to VI Images'
+IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
+VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
 dataset = Dataset_creat(IR,VI,[transform_pre])
 
 train_ratio = 0.8
@@ -261,8 +271,11 @@ train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
-device = torch.device('cuda:0')
-model = LadleNet_plus().to(device)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = LadleNet_plus()
+model = nn.DataParallel(model)
+model.to(device)
+
 loss_msssim = MS_SSIM(data_range=1., size_average=True, channel=3, weights=[0.5, 1., 2., 4., 8.])
 loss_ssim = SSIM(data_range=1., size_average=True, channel=3)
 loss_l1 = nn.L1Loss()
@@ -275,12 +288,19 @@ lowest_loss = float('inf')
 
 now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 file_name = f'result/{now}.txt'
+
+dir_name = os.path.dirname(file_name)
+if not os.path.exists(dir_name):
+    os.makedirs(dir_name)
+
 file = open(file_name, "a")
-sys.stdout = file
+
+# sys.stdout = file
 
 torch.autograd.set_detect_anomaly(True)
 
 for epoch in range(num_epochs):
+    print(f'Epoch {epoch+1}/{num_epochs}')
     start_time = time.time()
 
     model.train()
@@ -290,15 +310,16 @@ for epoch in range(num_epochs):
     l1_loss = 0.0
     
     for i, data in enumerate(train_loader, 0):
+        print(f'Batch {i+1}/{len(train_loader)}')
         ir_inputs, vi_inputs = data
         ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
 
         optimizer.zero_grad()
         
-        outputs = model(ir_inputs)
+        outputs = model(vi_inputs)
         
-        msssim = 0.84 * (1 - loss_msssim(outputs, vi_inputs))
-        l1 = (1-0.84) * loss_l1(outputs, vi_inputs)
+        msssim = 0.84 * (1 - loss_msssim(outputs, ir_inputs))
+        l1 = (1-0.84) * loss_l1(outputs, ir_inputs)
         
         total_loss = msssim + l1
         
@@ -323,14 +344,15 @@ for epoch in range(num_epochs):
 
     with torch.no_grad():
         for i, data in enumerate(val_loader, 0):
+            print(f'Validation Batch {i+1}/{len(val_loader)}')
             ir_inputs_val, vi_inputs_val = data
             ir_inputs_val, vi_inputs_val = ir_inputs_val.to(device), vi_inputs_val.to(device)
 
-            outputs_val = model(ir_inputs_val)
+            outputs_val = model(vi_inputs_val)
 
-            ssim_val_value = loss_ssim(outputs_val, vi_inputs_val)
-            l1_val_value = loss_l1(outputs_val, vi_inputs_val)
-            msssim_val_value = loss_msssim(outputs_val, vi_inputs_val)
+            ssim_val_value = loss_ssim(outputs_val, ir_inputs_val)
+            l1_val_value = loss_l1(outputs_val, ir_inputs_val)
+            msssim_val_value = loss_msssim(outputs_val, ir_inputs_val)
             
             ssim_val += ssim_val_value.item()
             l1_val += l1_val_value.item()
@@ -347,6 +369,8 @@ for epoch in range(num_epochs):
         now = datetime.datetime.now().strftime("%Y-%m-%d")
         lowest_loss = average_loss
         lowest_loss_save_path = os.path.join("weight", f"LadleNet_plus_lowest_loss_{now}.pth")
+        if not os.path.exists("weight"):
+            os.makedirs("weight")
         state_dict_lowest_loss = model.state_dict()
         metadata_lowest_loss = {'learning_rate': scheduler.optimizer.param_groups[0]['lr'],
                                 'batch_size': batch_size,
@@ -363,6 +387,8 @@ for epoch in range(num_epochs):
     if (epoch+1) % save_step == 0 or (epoch + 1) == num_epochs:
         now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         save_path = os.path.join("weight", f"{now}_LadleNet_plus.pth")
+        if not os.path.exists("weight"):
+            os.makedirs("weight")
         state_dict = model.state_dict()
         metadata = {'learning_rate': scheduler.optimizer.param_groups[0]['lr'],
                     'batch_size': batch_size,
