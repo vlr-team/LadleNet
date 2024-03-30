@@ -1,0 +1,8 @@
+**__pycache__
+**/data
+/outputs
+/logs
+/Model/LadleNet+/DeepLabV3s
+/Model/LadleNet/results
+/Model/LadleNet+/results
+**/weights
