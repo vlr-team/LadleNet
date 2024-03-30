@@ -342,6 +342,8 @@ for epoch in range(num_epochs):
     l1_val = 0.0
     ssim_val = 0.0
 
+    sample_images = []
+    image_count = 0
     with torch.no_grad():
         for i, data in enumerate(val_loader, 0):
             print(f'Validation Batch {i+1}/{len(val_loader)}')
@@ -349,6 +351,11 @@ for epoch in range(num_epochs):
             ir_inputs_val, vi_inputs_val = ir_inputs_val.to(device), vi_inputs_val.to(device)
 
             outputs_val = model(vi_inputs_val)
+            
+            # TODO: Sample the images
+            if i%15 == 0 and image_count < 10:
+                sample_images.append(torch.cat((outputs_val[0:1].cpu().detach(), ir_inputs_val[0:1].cpu().detach()), dim=2))
+                image_count += 1
 
             ssim_val_value = loss_ssim(outputs_val, ir_inputs_val)
             l1_val_value = loss_l1(outputs_val, ir_inputs_val)
@@ -357,6 +364,17 @@ for epoch in range(num_epochs):
             ssim_val += ssim_val_value.item()
             l1_val += l1_val_value.item()
             msssim_val += msssim_val_value.item()
+    
+    # TODO: Unpack and write the images
+    pairs = torch.stack(sample_images)
+    grid = vutils.make_grid(pairs, nrow=10, padding=2, normalize=False, scale_each=False)
+    grid_np = grid.numpy()
+    grid_np = np.transpose(grid_np, (1, 2, 0))
+    grid_np = (grid_np * 255).astype(np.uint8)
+    grid_image = Image.fromarray(grid_np)
+    if not os.path.exists("result/test_images"):
+        os.makedirs("result/test_images")
+    grid_image.save(f"result/test_images/{now}_epoch_{epoch}.png")
 
     scheduler.step(average_loss)
 
