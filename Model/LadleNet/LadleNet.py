@@ -309,7 +309,13 @@ class Dataset_creat(Dataset):
         
         if len(img_IR.shape)<3:
             img_IR = skimage.color.gray2rgb(img_IR)
+            # TODO: Convert the image to float32
+            img_IR = img_IR.astype(np.float32)
         
+        # TODO: Normalize the image
+        if img_IR.max() > 1.0:  # Assuming the image is not already normalized
+            img_IR /= 65535.0
+  
         img_VI = io.imread(VI_dic)
 
         if self.transform != None:
@@ -323,14 +329,15 @@ class Dataset_creat(Dataset):
         package = (img_IR,img_VI)
         return package
 
+# def main():
 batch_size = 40
 num_epochs = 30
 learning_rate = 0.1
 save_step = int(num_epochs * 0.1)
 
 transform_pre = transforms.Compose([transforms.ToTensor()
-                                  ,transforms.Resize((300,400))
-                                  ,transforms.CenterCrop((192, 256))])
+                                ,transforms.Resize((300,400))
+                                ,transforms.CenterCrop((192, 256))])
 
 IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
 VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
@@ -361,6 +368,12 @@ highest_msssim = - float('inf')
 
 now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 file_name = f'result/{now}.txt'
+
+# TODO: Create the directory if it does not exist
+dir_name = os.path.dirname(file_name)
+if not os.path.exists(dir_name):
+    os.makedirs(dir_name)
+
 file = open(file_name, "a")
 sys.stdout = file
 
@@ -380,7 +393,7 @@ for epoch in range(num_epochs):
         ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
 
         optimizer.zero_grad()
-        
+        # TODO: Reconfigure the model
         outputs = model(vi_inputs)  # My model VI to IR
         msssim = 0.84 * (1 - loss_ssim(outputs, ir_inputs))
         l1 = (1-0.84) * loss_l1(outputs, ir_inputs)
@@ -394,7 +407,7 @@ for epoch in range(num_epochs):
         train_loss += total_loss.item()
         msssim_loss += msssim.item()
         l1_loss += l1.item()
-  
+
         
     average_loss = train_loss / len(train_loader)
     avg_msssim_loss = msssim_loss / len(train_loader)
@@ -469,6 +482,9 @@ for epoch in range(num_epochs):
         print(f'--------------------Learning_Rate: {lr_record}--------------------')
     
     print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
-    
-    
+
 file.close()
+
+# if __name__ == '__main__':
+#     main()
+    
