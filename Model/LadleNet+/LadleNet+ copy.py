@@ -3,15 +3,6 @@ import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
-
-# TODO: MULTI-GPU TRAINING
-import torch.multiprocessing as mp
-from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed import init_process_group, destroy_process_group
-
-from accelerate import Accelerator
-
 import random
 import torch
 import torch.nn as nn
@@ -232,7 +223,7 @@ class Dataset_creat(Dataset):
 
         IR_dic = os.path.join(self.IR_path, self.filename_IR[idx])
         VI_dic = os.path.join(self.VI_path, self.filename_VI[idx])
-            
+        
         # TODO: NEW WAY TO LOAD IMAGES
         img_IR = cv2.imread(IR_dic, cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535.0
         img_IR = np.expand_dims(img_IR, axis=2)
@@ -240,7 +231,7 @@ class Dataset_creat(Dataset):
 
         img_VI = cv2.imread(VI_dic, cv2.IMREAD_UNCHANGED)
         img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-
+        
         if self.transform != None:
             img_IR = self.transform(img_IR)
             
@@ -249,12 +240,10 @@ class Dataset_creat(Dataset):
         img_IR = torch.transpose(img_IR, 0, 0)
         img_VI = torch.transpose(img_VI, 0, 0)
                 
-        package = (img_IR,img_VI)
+        package = (img_IR, img_VI)
         return package
 
-accelerator = Accelerator()
-
-batch_size = 56 
+batch_size = 10  # 56 
 num_epochs = 50
 learning_rate = 0.5
 save_step = int(num_epochs * 0.2)
@@ -279,8 +268,9 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, dr
 val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 model = LadleNet_plus()
+# model = nn.DataParallel(model)
+model.to(device)
 
 loss_msssim = MS_SSIM(data_range=1., size_average=True, channel=3, weights=[0.5, 1., 2., 4., 8.])
 loss_ssim = SSIM(data_range=1., size_average=True, channel=3)
@@ -301,155 +291,62 @@ if not os.path.exists(dir_name):
 
 file = open(file_name, "a")
 
-sys.stdout = file
+# sys.stdout = file
 
 torch.autograd.set_detect_anomaly(True)
 
-train_loader, val_loader, model, optimizer = accelerator.prepare(train_loader,
-                                                                          val_loader, 
-                                                                          model, 
-                                                                          optimizer)
-
-for epoch in range(num_epochs):
-    print(f'Epoch {epoch+1}/{num_epochs}')
-    start_time = time.time()
-
-    model.train()
-    
-    train_loss = 0.0
-    msssim_loss = 0.0
-    l1_loss = 0.0
-    
-    for i, data in enumerate(train_loader, 0):
-        print(f'Batch {i+1}/{len(train_loader)}')
-        ir_inputs, vi_inputs = data
-        ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
-
-        optimizer.zero_grad()
-        
-        outputs = model(vi_inputs)
-        
-        msssim = 0.84 * (1 - loss_msssim(outputs, ir_inputs))
-        l1 = (1-0.84) * loss_l1(outputs, ir_inputs)
-        
-        total_loss = msssim + l1
-        
-        # total_loss.backward()
-        accelerator.backward(total_loss)
-        optimizer.step()
-        
-        train_loss += total_loss.item()
-        msssim_loss += msssim.item()
-        l1_loss += l1.item()
-  
-
-    average_loss = train_loss / len(train_loader)
-    avg_msssim_loss = msssim_loss / len(train_loader)
-    avg_l1_loss = l1_loss / len(train_loader)
-    
-    
+sample_images = []
+image_count = 0
+for ir_inputs, vi_inputs in train_loader:
+    ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
     model.eval()
-    
-    msssim_val = 0.0
-    l1_val = 0.0
-    ssim_val = 0.0
-
-    sample_images = []
-    image_count = 0
     with torch.no_grad():
-        for i, data in enumerate(val_loader, 0):
-            print(f'Validation Batch {i+1}/{len(val_loader)}')
-            ir_inputs_val, vi_inputs_val = data
-            ir_inputs_val, vi_inputs_val = ir_inputs_val.to(device), vi_inputs_val.to(device)
+        outputs = model(vi_inputs)
 
-            outputs_val = model(vi_inputs_val)
-            
-            # TODO: Sample the images
-            if i % 15 == 0 and image_count < 10:
-                ir_img = ir_inputs_val[0].cpu().numpy()
-                output_img = outputs_val[0].cpu().numpy()
-                vi_img = vi_inputs_val[0].cpu().numpy()
-                sample_images.append((ir_img, output_img, vi_img))
-                image_count += 1
-
-            ssim_val_value = loss_ssim(outputs_val, ir_inputs_val)
-            l1_val_value = loss_l1(outputs_val, ir_inputs_val)
-            msssim_val_value = loss_msssim(outputs_val, ir_inputs_val)
-            
-            ssim_val += ssim_val_value.item()
-            l1_val += l1_val_value.item()
-            msssim_val += msssim_val_value.item()
-    # TODO: Save the images
-    print("Processing test image samples...")
-    processed_images = []
-    for ir_img, output_img, vi_img in sample_images:
-        ir_img = torch.tensor((ir_img * 255).astype(np.uint8))
-        vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
-        output_img = torch.tensor(((output_img + 1) / 2 * 255).astype(np.uint8))
-
-        processed_images.append(torch.cat((vi_img, ir_img, output_img), dim=2))
-
-    grid = vutils.make_grid(torch.stack(processed_images), nrow=1, padding=2, normalize=False, scale_each=False)
-    grid_np = grid.numpy()
-    grid_np = np.transpose(grid_np, (1, 2, 0))  # Convert from (C, H, W) to (H, W, C)
-    grid_image = Image.fromarray(grid_np)
-    if not os.path.exists("result/test_images"):
-        os.makedirs("result/test_images")
-    grid_image.save(f"result/test_images/{now}_epoch_{epoch}.png")
-
-    scheduler.step(average_loss)
-
-    avg_ssim_val = ssim_val / len(val_loader)
-    avg_msssim_val = msssim_val / len(val_loader)
-    avg_l1_val = l1_val / len(val_loader)
-
-    if average_loss < lowest_loss:
-        now = datetime.datetime.now().strftime("%Y-%m-%d")
-        lowest_loss = average_loss
-        lowest_loss_save_path = os.path.join("weight", f"LadleNet_plus_lowest_loss_{now}.pth")
-        if not os.path.exists("weight"):
-            os.makedirs("weight")
-        state_dict_lowest_loss = model.state_dict()
-        metadata_lowest_loss = {'learning_rate': scheduler.optimizer.param_groups[0]['lr'],
-                                'batch_size': batch_size,
-                                'num_epochs': num_epochs,
-                                'current_epoch': epoch+1,
-                                'optimizer_name': type(optimizer).__name__.lower(),
-                                'loss_function': 'Loss_Content(MS-SSIM, L1)',
-                                'MS-SSIM': np.round(avg_msssim_val, 6),
-                                'L1': np.round(avg_l1_val, 6),
-                                'lowest_val_loss': np.round(lowest_loss, 6)}
-        
-        torch.save({'state_dict': state_dict_lowest_loss, 'metadata': metadata_lowest_loss}, lowest_loss_save_path)
+    # print(f"Outputs shape: {outputs.shape}")
+    # print(f"Outputs data type: {outputs.dtype}")
+    # print(f"Output sample: {outputs[0, :3, 50, 50]}")
+    # print(f"Inputs shape: {ir_inputs.shape}")
+    # print(f"Inputs data type: {ir_inputs.dtype}")
+    # print(f"Inputs sample: {ir_inputs[0, :3, 50, 50]}")
+    # print(f"VI inputs shape: {vi_inputs.shape}")
+    # print(f"VI inputs data type: {vi_inputs.dtype}")
+    # print(f"VI inputs sample: {vi_inputs[0, :3, 50, 50]}")
     
-    if (epoch+1) % save_step == 0 or (epoch + 1) == num_epochs:
-        now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        save_path = os.path.join("weight", f"{now}_LadleNet_plus.pth")
-        if not os.path.exists("weight"):
-            os.makedirs("weight")
-        state_dict = model.state_dict()
-        metadata = {'learning_rate': scheduler.optimizer.param_groups[0]['lr'],
-                    'batch_size': batch_size,
-                    'num_epochs': num_epochs,
-                    'current_epoch': epoch+1,
-                    'optimizer_name': type(optimizer).__name__.lower(),
-                    'loss_function': 'Loss_Content(MS-SSIM, L1)',
-                    'MS-SSIM': f"(train){np.round(avg_msssim_loss, 6)} / (val){np.round(avg_msssim_val, 6)}",
-                    'L1': f"(train){np.round(avg_l1_loss, 6)} / (val){np.round(avg_l1_val, 6)}",
-                    'Total_Loss': f"(train){np.round(average_loss, 6)}"}
 
-        torch.save({'state_dict': state_dict, 'metadata': metadata}, save_path)
-        
-    end_time = time.time()
-    time_diff = end_time - start_time
-    hours, remainder = divmod(time_diff, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    
-    if lr_record != scheduler.optimizer.param_groups[0]['lr']:
-        lr_record = scheduler.optimizer.param_groups[0]['lr']
-        print(f'--------------------Learning_Rate: {lr_record}--------------------')
-    
-    print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
-    
-    
+    # Concatenate outputs and inputs for visualization
+    if image_count < 10:
+        ir_img = ir_inputs[0].cpu().numpy()
+        output_img = outputs[0].cpu().numpy()
+        vi_img = vi_inputs[0].cpu().numpy()
+        sample_images.append((ir_img, output_img, vi_img))
+        print(f"Image count: {image_count}")
+        image_count += 1
+    else:
+        break
+    # sample_images = torch.cat((outputs, ir_inputs), dim=3)  # Assuming (B, C, H, W) shape
+
+# First process the images
+# 1. IR images are 3 channel [0,1]
+# 2. VI images are 3 channel [0,1]
+# 3. Output images are 3 channel [-1,1]
+
+processed_images = []
+for ir_img, output_img, vi_img in sample_images:
+    ir_img = torch.tensor((ir_img * 255).astype(np.uint8))
+    vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
+    output_img = torch.tensor(((output_img + 1) / 2 * 255).astype(np.uint8))
+
+    processed_images.append(torch.cat((vi_img, ir_img, output_img), dim=2))
+
+grid = vutils.make_grid(torch.stack(processed_images), nrow=1, padding=2, normalize=False, scale_each=False)
+# Convert to PIL image and save
+grid_np = grid.numpy()
+grid_np = np.transpose(grid_np, (1, 2, 0))  # Convert from (C, H, W) to (H, W, C)
+grid_image = Image.fromarray(grid_np)
+grid_image.save("test_output_input_grid.png")
+
+print("Saved 'test_output_input_grid.png'") # Only process one batch for this test
+
+
 file.close()

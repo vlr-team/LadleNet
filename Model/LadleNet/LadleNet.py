@@ -307,17 +307,13 @@ class Dataset_creat(Dataset):
         IR_dic = os.path.join(self.IR_path, self.filename_IR[idx])
         VI_dic = os.path.join(self.VI_path, self.filename_VI[idx])
             
-        # img_IR = io.imread(IR_dic)
-        # TODO: Modify the code to read the image using PIL
-        
-        # if len(img_IR.shape)<3:
-        #     img_IR = skimage.color.gray2rgb(img_IR)
+        # TODO: NEW WAY TO LOAD IMAGES
+        img_IR = cv2.imread(IR_dic, cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535.0
+        img_IR = np.expand_dims(img_IR, axis=2)
+        img_IR = np.repeat(img_IR, 3, axis=2)
 
-        img_IR = Image.open(IR_dic).convert('I').point(lambda i: i * (1.0 / 256)).convert('L')
-        img_IR = Image.merge("RGB", (img_IR, img_IR, img_IR))
-  
-        # img_VI = io.imread(VI_dic)
-        img_VI = Image.open(VI_dic).convert('RGB')
+        img_VI = cv2.imread(VI_dic, cv2.IMREAD_UNCHANGED)
+        img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
         if self.transform != None:
             img_IR = self.transform(img_IR)
@@ -403,25 +399,22 @@ for epoch in range(num_epochs):
         outputs = model(vi_inputs)  # My model VI to IR
         msssim = 0.84 * (1 - loss_ssim(outputs, ir_inputs))
         l1 = (1-0.84) * loss_l1(outputs, ir_inputs)
-        
+
         total_loss = msssim + l1
-        
+
         total_loss.backward()
         optimizer.step()
-        
-        
+
         train_loss += total_loss.item()
         msssim_loss += msssim.item()
         l1_loss += l1.item()
 
-        
     average_loss = train_loss / len(train_loader)
     avg_msssim_loss = msssim_loss / len(train_loader)
     avg_l1_loss = l1_loss / len(train_loader)
-    
-    
+
     model.eval()
-    
+
     msssim_val = 0.0
     l1_val = 0.0
     ssim_val = 0.0
@@ -437,24 +430,33 @@ for epoch in range(num_epochs):
             outputs_val = model(vi_inputs_val)
 
             # TODO: Sample the images
-            if i%15 == 0 and image_count < 10:
-                sample_images.append(torch.cat((outputs_val[0:1].cpu().detach(), ir_inputs_val[0:1].cpu().detach()), dim=2))
+            if i % 15 == 0 and image_count < 10:
+                ir_img = ir_inputs_val[0].cpu().numpy()
+                output_img = outputs_val[0].cpu().numpy()
+                vi_img = vi_inputs_val[0].cpu().numpy()
+                sample_images.append((ir_img, output_img, vi_img))
                 image_count += 1
 
             ssim_val_value = loss_ssim(outputs_val, ir_inputs_val)
             l1_val_value = loss_l1(outputs_val, ir_inputs_val)
             msssim_val_value = loss_msssim(outputs_val, ir_inputs_val)
-            
+
             ssim_val += ssim_val_value.item()
             l1_val += l1_val_value.item()
             msssim_val += msssim_val_value.item()
-    
-    # TODO: Unpack and write the images
-    pairs = torch.stack(sample_images)
-    grid = vutils.make_grid(pairs, nrow=10, padding=2, normalize=False, scale_each=False)
+
+    # TODO: Save the images
+    processed_images = []
+    for ir_img, output_img, vi_img in sample_images:
+        ir_img = torch.tensor((ir_img * 255).astype(np.uint8))
+        vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
+        output_img = torch.tensor(((output_img + 1) / 2 * 255).astype(np.uint8))
+
+        processed_images.append(torch.cat((vi_img, ir_img, output_img), dim=2))
+
+    grid = vutils.make_grid(torch.stack(processed_images), nrow=1, padding=2, normalize=False, scale_each=False)
     grid_np = grid.numpy()
     grid_np = np.transpose(grid_np, (1, 2, 0))
-    grid_np = (grid_np * 255).astype(np.uint8)
     grid_image = Image.fromarray(grid_np)
     if not os.path.exists("result/test_images"):
         os.makedirs("result/test_images")
