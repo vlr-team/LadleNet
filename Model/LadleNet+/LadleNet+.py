@@ -240,14 +240,20 @@ class Dataset_creat(Dataset):
         # img_IR = cv2.imread(IR_dic, cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535.0
         # img_IR = np.expand_dims(img_IR, axis=2)
         # img_IR = np.repeat(img_IR, 3, axis=2)
-        
-        image = cv2.imread(IR_dic, -1)  # -1 means read as is, no conversions.
-        image = img_as_ubyte(exposure.rescale_intensity(image))
-        img_IR = cv2.equalizeHist(image)
-        img_IR = cv2.cvtColor(img_IR, cv2.COLOR_BGR2RGB)
+        try:
+            image = cv2.imread(IR_dic, -1)  # -1 means read as is, no conversions.
+            image = img_as_ubyte(exposure.rescale_intensity(image))
+            img_IR = cv2.equalizeHist(image)
+            img_IR = cv2.cvtColor(img_IR, cv2.COLOR_BGR2RGB)
 
-        img_VI = cv2.imread(VI_dic, cv2.IMREAD_UNCHANGED)
-        img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            img_VI = cv2.imread(VI_dic, cv2.IMREAD_UNCHANGED)
+            img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+        except Exception as e:
+            print(f"Error reading image: {e}")
+            print(f"IR_dic: {IR_dic}")
+            print(f"VI_dic: {VI_dic}")
+            return None
 
         if self.transform != None:
             img_IR = self.transform(img_IR)
@@ -429,7 +435,7 @@ for epoch in range(num_epochs):
         
         torch.save({'state_dict': state_dict_lowest_loss, 'metadata': metadata_lowest_loss}, lowest_loss_save_path)
     
-    if (epoch+1) % save_step == 0 or (epoch + 1) == num_epochs:
+    if (epoch + 1) % save_step == 0 or (epoch + 1) == num_epochs:
         now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         save_path = os.path.join("weight", f"{now}_LadleNet_plus.pth")
         if not os.path.exists("weight"):
@@ -457,6 +463,7 @@ for epoch in range(num_epochs):
         print(f'--------------------Learning_Rate: {lr_record}--------------------')
     
     print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
+    file.write(f'Epoch [{epoch+1}/{num_epochs}], (Train_Loss) MS-SSIM:{avg_msssim_loss}, L1:{avg_l1_loss}, Total:{average_loss}   (Val_Value) MS-SSIM:{avg_msssim_val}, SSIM:{avg_ssim_val}, L1:{avg_l1_val}, Time: {int(hours)}h-{int(minutes)}m-{int(seconds)}s\n')
     
     
 file.close()
