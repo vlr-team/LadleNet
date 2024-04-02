@@ -27,6 +27,9 @@ from torch.utils.data import Subset
 from torch.utils.data import Dataset
 from skimage import io
 import skimage
+
+from skimage import exposure, img_as_ubyte
+
 import os
 import cv2
 import datetime
@@ -234,9 +237,14 @@ class Dataset_creat(Dataset):
         VI_dic = os.path.join(self.VI_path, self.filename_VI[idx])
             
         # TODO: NEW WAY TO LOAD IMAGES
-        img_IR = cv2.imread(IR_dic, cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535.0
-        img_IR = np.expand_dims(img_IR, axis=2)
-        img_IR = np.repeat(img_IR, 3, axis=2)
+        # img_IR = cv2.imread(IR_dic, cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535.0
+        # img_IR = np.expand_dims(img_IR, axis=2)
+        # img_IR = np.repeat(img_IR, 3, axis=2)
+        
+        image = cv2.imread(IR_dic, -1)  # -1 means read as is, no conversions.
+        image = img_as_ubyte(exposure.rescale_intensity(image))
+        img_IR = cv2.equalizeHist(image)
+        img_IR = cv2.cvtColor(img_IR, cv2.COLOR_BGR2RGB)
 
         img_VI = cv2.imread(VI_dic, cv2.IMREAD_UNCHANGED)
         img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
@@ -252,7 +260,7 @@ class Dataset_creat(Dataset):
         package = (img_IR,img_VI)
         return package
 
-accelerator = Accelerator()
+# accelerator = Accelerator()
 
 batch_size = 56 
 num_epochs = 50
@@ -280,7 +288,7 @@ val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-model = LadleNet_plus()
+model = nn.DataParallel(LadleNet_plus()).to(device)
 
 loss_msssim = MS_SSIM(data_range=1., size_average=True, channel=3, weights=[0.5, 1., 2., 4., 8.])
 loss_ssim = SSIM(data_range=1., size_average=True, channel=3)
@@ -301,14 +309,14 @@ if not os.path.exists(dir_name):
 
 file = open(file_name, "a")
 
-sys.stdout = file
+# sys.stdout = file
 
 torch.autograd.set_detect_anomaly(True)
 
-train_loader, val_loader, model, optimizer = accelerator.prepare(train_loader,
-                                                                          val_loader, 
-                                                                          model, 
-                                                                          optimizer)
+# train_loader, val_loader, model, optimizer = accelerator.prepare(train_loader,
+#                                                                           val_loader, 
+#                                                                           model, 
+#                                                                           optimizer)
 
 for epoch in range(num_epochs):
     print(f'Epoch {epoch+1}/{num_epochs}')
@@ -334,8 +342,7 @@ for epoch in range(num_epochs):
         
         total_loss = msssim + l1
         
-        # total_loss.backward()
-        accelerator.backward(total_loss)
+        total_loss.backward()
         optimizer.step()
         
         train_loss += total_loss.item()
