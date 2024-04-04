@@ -224,18 +224,37 @@ class Dataset_creat(Dataset):
         self.VI_path = VI_path
         self.filename_IR = sorted(os.listdir(self.IR_path))
         self.filename_VI = sorted(os.listdir(self.VI_path))
-        self.transform = transforms[0]     
-    
+        self.transform = transforms[0]
+        
+        ############# FOR FLIR DATASET ################
+        self.paired_filenames = []
+        pattern = re.compile(r'frame-\d+')
+        for ir_filename in self.filename_IR:
+            match = pattern.search(ir_filename)
+            if match:
+                frame_no = match.group()
+                # Find the matching VI file
+                for vi_filename in self.filename_VI:
+                    if frame_no in vi_filename:
+                        self.paired_filenames.append((ir_filename, vi_filename))
+                        break
+        self.filename_IR = [pair[0] for pair in self.paired_filenames]
+        print("Length of paired filenames: ", len(self.paired_filenames))
+        self.filename_VI = [pair[1] for pair in self.paired_filenames]
+        ###############################################
     def __len__(self):
+        ############# FOR FLIR DATASET ################
+        return len(self.paired_filenames)
+        ###############################################
         return len(os.listdir(self.IR_path))
         
     def __getitem__(self,idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-
+        
         IR_dic = os.path.join(self.IR_path, self.filename_IR[idx])
         VI_dic = os.path.join(self.VI_path, self.filename_VI[idx])
-            
+ 
         # TODO: NEW WAY TO LOAD IMAGES
         # img_IR = cv2.imread(IR_dic, cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535.0
         # img_IR = np.expand_dims(img_IR, axis=2)
@@ -247,7 +266,8 @@ class Dataset_creat(Dataset):
                 return (None, None)
             img_IR = img_as_ubyte(exposure.rescale_intensity(img_IR))
             img_IR = cv2.equalizeHist(img_IR)
-            img_IR = cv2.merge((img_IR, img_IR, img_IR))
+            if img_IR.shape[0] == 1:
+                img_IR = cv2.merge((img_IR, img_IR, img_IR))
         except Exception as e:
             print(f"Failed to load image {IR_dic}: {e}")
             return (None, None)
@@ -288,8 +308,10 @@ transform_pre = transforms.Compose([transforms.ToTensor()
                                   ,transforms.Resize((300,400))
                                   ,transforms.CenterCrop((192, 256))])
 
-IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
-VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
+# IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
+IR = '/ocean/projects/cis220039p/ayanovic/datasets/FLIR/images_thermal_train/data'
+# VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
+VI = '/ocean/projects/cis220039p/ayanovic/datasets/FLIR/images_rgb_train/data'
 dataset = Dataset_creat(IR,VI,[transform_pre])
 
 train_ratio = 0.8
