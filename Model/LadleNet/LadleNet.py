@@ -18,6 +18,7 @@ from torch.utils.data import Subset
 from torch.utils.data import Dataset
 from skimage import io
 import skimage
+from skimage import exposure, img_as_ubyte
 import os
 import cv2
 import datetime
@@ -308,12 +309,27 @@ class Dataset_creat(Dataset):
         VI_dic = os.path.join(self.VI_path, self.filename_VI[idx])
             
         # TODO: NEW WAY TO LOAD IMAGES
-        img_IR = cv2.imread(IR_dic, cv2.IMREAD_UNCHANGED).astype(np.float32) / 65535.0
-        img_IR = np.expand_dims(img_IR, axis=2)
-        img_IR = np.repeat(img_IR, 3, axis=2)
+        try:
+            img_IR = cv2.imread(IR_dic, -1)
+            if img_IR is None:
+                print(f"Failed to load image {IR_dic}")
+                return (None, None)
+            img_IR = img_as_ubyte(exposure.rescale_intensity(img_IR))
+            img_IR = cv2.equalizeHist(img_IR)
+            img_IR = cv2.merge((img_IR, img_IR, img_IR))
+        except Exception as e:
+            print(f"Failed to load image {IR_dic}: {e}")
+            return (None, None)
 
-        img_VI = cv2.imread(VI_dic, cv2.IMREAD_UNCHANGED)
-        img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        try:
+            img_VI = cv2.imread(VI_dic, -1)
+            if img_VI is None or img_VI.shape[0] == 0:
+                print(f"Failed to load image {VI_dic}")
+                return (None, None)
+            img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        except Exception as e:
+            print(f"Failed to load image {VI_dic}: {e}")
+            return (None, None)
 
         if self.transform != None:
             img_IR = self.transform(img_IR)
@@ -325,6 +341,10 @@ class Dataset_creat(Dataset):
                 
         package = (img_IR,img_VI)
         return package
+
+def collate_fn(batch):
+    batch = list(filter(lambda x: x[0] is not None and x[1] is not None, batch))
+    return torch.utils.data.dataloader.default_collate(batch)
 
 batch_size = 40
 num_epochs = 30
@@ -347,8 +367,8 @@ test_size = len(dataset) - train_size
 
 train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=collate_fn)
+val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True, collate_fn=collate_fn)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = LadleNet()
@@ -448,7 +468,7 @@ for epoch in range(num_epochs):
     # TODO: Save the images
     processed_images = []
     for ir_img, output_img, vi_img in sample_images:
-        ir_img = torch.tensor((ir_img * 255).astype(np.uint8))
+        ir_img = torch.tensor((ir_img).astype(np.uint8))
         vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
         output_img = torch.tensor(((output_img + 1) / 2 * 255).astype(np.uint8))
 
