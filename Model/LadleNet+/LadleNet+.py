@@ -266,8 +266,7 @@ class Dataset_creat(Dataset):
                 return (None, None)
             img_IR = img_as_ubyte(exposure.rescale_intensity(img_IR))
             img_IR = cv2.equalizeHist(img_IR)
-            if img_IR.shape[0] == 1:
-                img_IR = cv2.merge((img_IR, img_IR, img_IR))
+            img_IR = cv2.merge((img_IR, img_IR, img_IR))
         except Exception as e:
             print(f"Failed to load image {IR_dic}: {e}")
             return (None, None)
@@ -299,7 +298,7 @@ def collate_fn(batch):
 
 # accelerator = Accelerator()
 
-batch_size = 56 
+batch_size = 20 # 56 
 num_epochs = 50
 learning_rate = 0.5
 save_step = int(num_epochs * 0.2)
