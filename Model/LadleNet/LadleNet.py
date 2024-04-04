@@ -31,6 +31,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import lpips
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 from pytorch_msssim import ms_ssim,MS_SSIM,SSIM
+import re
 from typing import Union, List
 from PIL import Image
 from PIL import ImageFile
@@ -298,7 +299,27 @@ class Dataset_creat(Dataset):
         self.filename_VI = sorted(os.listdir(self.VI_path))
         self.transform = transforms[0]     
     
+    ############# FOR FLIR DATASET ################
+        self.paired_filenames = []
+        pattern = re.compile(r'frame-\d+')
+        for ir_filename in self.filename_IR:
+            match = pattern.search(ir_filename)
+            if match:
+                frame_no = match.group()
+                # Find the matching VI file
+                for vi_filename in self.filename_VI:
+                    if frame_no in vi_filename:
+                        self.paired_filenames.append((ir_filename, vi_filename))
+                        break
+        self.filename_IR = [pair[0] for pair in self.paired_filenames]
+        print("Length of paired filenames: ", len(self.paired_filenames))
+        self.filename_VI = [pair[1] for pair in self.paired_filenames]
+        ###############################################
+
     def __len__(self):
+        ############# FOR FLIR DATASET ################
+        return len(self.paired_filenames)
+        ###############################################
         return len(os.listdir(self.IR_path))
         
     def __getitem__(self,idx):
@@ -346,7 +367,7 @@ def collate_fn(batch):
     batch = list(filter(lambda x: x[0] is not None and x[1] is not None, batch))
     return torch.utils.data.dataloader.default_collate(batch)
 
-batch_size = 40
+batch_size = 5  # 40
 num_epochs = 30
 learning_rate = 0.1
 save_step = int(num_epochs * 0.1)
@@ -355,8 +376,10 @@ transform_pre = transforms.Compose([transforms.ToTensor()
                                 ,transforms.Resize((300,400))
                                 ,transforms.CenterCrop((192, 256))])
 
-IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
-VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
+# IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
+IR = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_thermal_train/data'
+# VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
+VI = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_rgb_train/data'
 dataset = Dataset_creat(IR, VI, [transform_pre])
 
 train_ratio = 0.8
@@ -395,7 +418,7 @@ if not os.path.exists(dir_name):
 
 file = open(file_name, "a")
 # TODO: Redirect remove the print statement
-sys.stdout = file
+# sys.stdout = file
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -468,7 +491,7 @@ for epoch in range(num_epochs):
     # TODO: Save the images
     processed_images = []
     for ir_img, output_img, vi_img in sample_images:
-        ir_img = torch.tensor((ir_img).astype(np.uint8))
+        ir_img = torch.tensor((ir_img * 255).astype(np.uint8))
         vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
         output_img = torch.tensor(((output_img + 1) / 2 * 255).astype(np.uint8))
 
@@ -533,5 +556,6 @@ for epoch in range(num_epochs):
         print(f'--------------------Learning_Rate: {lr_record}--------------------')
     
     print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
+    file.write('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s\n'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
 
 file.close()

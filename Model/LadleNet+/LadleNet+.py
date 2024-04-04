@@ -10,7 +10,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
-from accelerate import Accelerator
+# from accelerate import Accelerator
 
 import random
 import torch
@@ -309,9 +309,9 @@ transform_pre = transforms.Compose([transforms.ToTensor()
                                   ,transforms.CenterCrop((192, 256))])
 
 # IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
-IR = '/ocean/projects/cis220039p/ayanovic/datasets/FLIR/images_thermal_train/data'
+IR = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_thermal_train/data'
 # VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
-VI = '/ocean/projects/cis220039p/ayanovic/datasets/FLIR/images_rgb_train/data'
+VI = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_rgb_train/data'
 dataset = Dataset_creat(IR,VI,[transform_pre])
 
 train_ratio = 0.8
