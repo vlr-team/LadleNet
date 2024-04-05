@@ -31,6 +31,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import lpips
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 from pytorch_msssim import ms_ssim,MS_SSIM,SSIM
+import re
 from typing import Union, List
 from PIL import Image
 from PIL import ImageFile
@@ -39,6 +40,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 class LadleNet(nn.Module):
     def __init__(self):
         super().__init__()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         self.channel_trans_1 = self.channel_trans(3,32)
         
@@ -160,10 +162,10 @@ class LadleNet(nn.Module):
     
     def fea_cat(self, fea1, fea2):
         ch_in = fea1.shape[1]
-        cat_conv = nn.Conv2d(2*ch_in, ch_in, 3, 1, 1).to(device)
+        cat_conv = nn.Conv2d(2*ch_in, ch_in, 3, 1, 1).to(self.device)
         cat = torch.cat((fea1, fea2), 1)
         
-        return cat_conv(cat.to(device))
+        return cat_conv(cat.to(self.device))
     
     def forward(self, x):
         trans1 = self.channel_trans_1(x)
@@ -298,7 +300,27 @@ class Dataset_creat(Dataset):
         self.filename_VI = sorted(os.listdir(self.VI_path))
         self.transform = transforms[0]     
     
+    ############# FOR FLIR DATASET ################
+        self.paired_filenames = []
+        pattern = re.compile(r'frame-\d+')
+        for ir_filename in self.filename_IR:
+            match = pattern.search(ir_filename)
+            if match:
+                frame_no = match.group()
+                # Find the matching VI file
+                for vi_filename in self.filename_VI:
+                    if frame_no in vi_filename:
+                        self.paired_filenames.append((ir_filename, vi_filename))
+                        break
+        self.filename_IR = [pair[0] for pair in self.paired_filenames]
+        print("Length of paired filenames: ", len(self.paired_filenames))
+        self.filename_VI = [pair[1] for pair in self.paired_filenames]
+        ###############################################
+
     def __len__(self):
+        ############# FOR FLIR DATASET ################
+        return len(self.paired_filenames)
+        ###############################################
         return len(os.listdir(self.IR_path))
         
     def __getitem__(self,idx):
@@ -346,192 +368,196 @@ def collate_fn(batch):
     batch = list(filter(lambda x: x[0] is not None and x[1] is not None, batch))
     return torch.utils.data.dataloader.default_collate(batch)
 
-batch_size = 40
-num_epochs = 30
-learning_rate = 0.1
-save_step = int(num_epochs * 0.1)
+if __name__ == '__main__':
+    batch_size = 5  # 40
+    num_epochs = 30
+    learning_rate = 0.1
+    save_step = int(num_epochs * 0.1)
 
-transform_pre = transforms.Compose([transforms.ToTensor()
-                                ,transforms.Resize((300,400))
-                                ,transforms.CenterCrop((192, 256))])
+    transform_pre = transforms.Compose([transforms.ToTensor()
+                                    ,transforms.Resize((300,400))
+                                    ,transforms.CenterCrop((192, 256))])
 
-IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
-VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
-dataset = Dataset_creat(IR, VI, [transform_pre])
+    # IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
+    IR = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_thermal_train/data'
+    # VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
+    VI = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_rgb_train/data'
+    dataset = Dataset_creat(IR, VI, [transform_pre])
 
-train_ratio = 0.8
-test_ratio = 1 - train_ratio
+    train_ratio = 0.8
+    test_ratio = 1 - train_ratio
 
-train_size = int(train_ratio * len(dataset))
-test_size = len(dataset) - train_size
+    train_size = int(train_ratio * len(dataset))
+    test_size = len(dataset) - train_size
 
-train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=collate_fn)
-val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True, collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=collate_fn)
+    val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, drop_last=True, collate_fn=collate_fn)
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = LadleNet()
-model = nn.DataParallel(model)
-model.to(device)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = LadleNet()
+    model = nn.DataParallel(model)
+    model.to(device)
 
-loss_msssim = MS_SSIM(data_range=1., size_average=True, channel=3, weights=[0.5, 1., 2., 4., 8.])
-loss_ssim = SSIM(data_range=1., size_average=True, channel=3)
-loss_l1 = nn.L1Loss()
-loss_l2 = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, amsgrad=True)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=2, verbose=False, cooldown=10)
+    loss_msssim = MS_SSIM(data_range=1., size_average=True, channel=3, weights=[0.5, 1., 2., 4., 8.])
+    loss_ssim = SSIM(data_range=1., size_average=True, channel=3)
+    loss_l1 = nn.L1Loss()
+    loss_l2 = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, amsgrad=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=2, verbose=False, cooldown=10)
 
-lr_record = learning_rate
-highest_msssim = - float('inf')
+    lr_record = learning_rate
+    highest_msssim = - float('inf')
 
-now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-file_name = f'result/{now}.txt'
+    now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    file_name = f'result/{now}.txt'
 
-# TODO: Create the directory if it does not exist
-dir_name = os.path.dirname(file_name)
-if not os.path.exists(dir_name):
-    os.makedirs(dir_name)
+    # TODO: Create the directory if it does not exist
+    dir_name = os.path.dirname(file_name)
+    if not os.path.exists(dir_name):
+        os.makedirs(dir_name)
 
-file = open(file_name, "a")
-# TODO: Redirect remove the print statement
-sys.stdout = file
+    file = open(file_name, "a")
+    # TODO: Redirect remove the print statement
+    # sys.stdout = file
 
-torch.autograd.set_detect_anomaly(True)
+    torch.autograd.set_detect_anomaly(True)
 
-for epoch in range(num_epochs):
-    print(f'Epoch {epoch+1}/{num_epochs}')
-    start_time = time.time()
+    for epoch in range(num_epochs):
+        print(f'Epoch {epoch+1}/{num_epochs}')
+        start_time = time.time()
 
-    model.train()
-    
-    train_loss = 0.0
-    msssim_loss = 0.0
-    l1_loss = 0.0
-    
-    for i, data in enumerate(train_loader, 0):
-        print(f'Batch {i+1}/{len(train_loader)}')
-        ir_inputs, vi_inputs = data
-        ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
-
-        optimizer.zero_grad()
-        # TODO: Reconfigure the model
-        outputs = model(vi_inputs)  # My model VI to IR
-        msssim = 0.84 * (1 - loss_ssim(outputs, ir_inputs))
-        l1 = (1-0.84) * loss_l1(outputs, ir_inputs)
-
-        total_loss = msssim + l1
-
-        total_loss.backward()
-        optimizer.step()
-
-        train_loss += total_loss.item()
-        msssim_loss += msssim.item()
-        l1_loss += l1.item()
-
-    average_loss = train_loss / len(train_loader)
-    avg_msssim_loss = msssim_loss / len(train_loader)
-    avg_l1_loss = l1_loss / len(train_loader)
-
-    model.eval()
-
-    msssim_val = 0.0
-    l1_val = 0.0
-    ssim_val = 0.0
-
-    sample_images = []
-    image_count = 0
-    with torch.no_grad():
-        for i, data in enumerate(val_loader, 0):
-            print(f'Validation Batch {i+1}/{len(val_loader)}')
-            ir_inputs_val, vi_inputs_val = data
-            ir_inputs_val, vi_inputs_val = ir_inputs_val.to(device), vi_inputs_val.to(device)
-
-            outputs_val = model(vi_inputs_val)
-
-            # TODO: Sample the images
-            if i % 15 == 0 and image_count < 10:
-                ir_img = ir_inputs_val[0].cpu().numpy()
-                output_img = outputs_val[0].cpu().numpy()
-                vi_img = vi_inputs_val[0].cpu().numpy()
-                sample_images.append((ir_img, output_img, vi_img))
-                image_count += 1
-
-            ssim_val_value = loss_ssim(outputs_val, ir_inputs_val)
-            l1_val_value = loss_l1(outputs_val, ir_inputs_val)
-            msssim_val_value = loss_msssim(outputs_val, ir_inputs_val)
-
-            ssim_val += ssim_val_value.item()
-            l1_val += l1_val_value.item()
-            msssim_val += msssim_val_value.item()
-
-    # TODO: Save the images
-    processed_images = []
-    for ir_img, output_img, vi_img in sample_images:
-        ir_img = torch.tensor((ir_img).astype(np.uint8))
-        vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
-        output_img = torch.tensor(((output_img + 1) / 2 * 255).astype(np.uint8))
-
-        processed_images.append(torch.cat((vi_img, ir_img, output_img), dim=2))
-
-    grid = vutils.make_grid(torch.stack(processed_images), nrow=1, padding=2, normalize=False, scale_each=False)
-    grid_np = grid.numpy()
-    grid_np = np.transpose(grid_np, (1, 2, 0))
-    grid_image = Image.fromarray(grid_np)
-    if not os.path.exists("result/test_images"):
-        os.makedirs("result/test_images")
-    grid_image.save(f"result/test_images/{now}_epoch_{epoch}.png")
-
-    avg_ssim_val = ssim_val / len(val_loader)
-    avg_msssim_val = msssim_val / len(val_loader)
-    avg_l1_val = l1_val / len(val_loader)
-
-    scheduler.step(average_loss)
-    
-    if avg_msssim_val > highest_msssim:
-        now = datetime.datetime.now().strftime("%Y-%m-%d")
-        highest_msssim = avg_msssim_val
-        highest_msssim_save_path = os.path.join("weight", f"LadleNet_highest_msssim_{now}.pth")
-        if not os.path.exists("weight"):
-            os.makedirs("weight")
-        state_dict_lowest_loss = model.state_dict()
-        metadata_lowest_loss = {'learning_rate': '0.001',
-                                'batch_size': batch_size,
-                                'num_epochs': '130',
-                                'current_epoch': '130',
-                                'optimizer_name': type(optimizer).__name__.lower(),
-                                'loss_function': 'Loss_Content(MS-SSIM, L1)',
-                                'MS-SSIM': np.round(avg_msssim_val, 6),
-                                'L1': np.round(avg_l1_val, 6)}
+        model.train()
         
-        torch.save({'state_dict': state_dict_lowest_loss, 'metadata': metadata_lowest_loss}, highest_msssim_save_path)
-    
-    if (epoch+1) % save_step == 0 or (epoch + 1) == num_epochs:
-        now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        save_path = os.path.join("weight", f"{now}_LadleNet.pth")
-        if not os.path.exists("weight"):
-            os.makedirs("weight")
-        state_dict = model.state_dict()
-        metadata = {'learning_rate': '0.001',
-                    'batch_size': batch_size,
-                    'num_epochs': '120',
-                    'current_epoch': '120',
-                    'optimizer_name': type(optimizer).__name__.lower(),
-                    'loss_function': 'Loss_Content(MS-SSIM, L1)',
-                    'MS-SSIM': f"(train){np.round(avg_msssim_loss, 6)} / (val){np.round(avg_msssim_val, 6)}",
-                    'L1': f"(train){np.round(avg_l1_loss, 6)} / (val){np.round(avg_l1_val, 6)}"}
-
-        torch.save({'state_dict': state_dict, 'metadata': metadata}, save_path)
+        train_loss = 0.0
+        msssim_loss = 0.0
+        l1_loss = 0.0
         
-    end_time = time.time()
-    time_diff = end_time - start_time
-    hours, remainder = divmod(time_diff, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    
-    if lr_record != scheduler.optimizer.param_groups[0]['lr']:
-        lr_record = scheduler.optimizer.param_groups[0]['lr']
-        print(f'--------------------Learning_Rate: {lr_record}--------------------')
-    
-    print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
+        for i, data in enumerate(train_loader, 0):
+            print(f'Batch {i+1}/{len(train_loader)}')
+            ir_inputs, vi_inputs = data
+            ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
 
-file.close()
+            optimizer.zero_grad()
+            # TODO: Reconfigure the model
+            outputs = model(vi_inputs)  # My model VI to IR
+            msssim = 0.84 * (1 - loss_ssim(outputs, ir_inputs))
+            l1 = (1-0.84) * loss_l1(outputs, ir_inputs)
+
+            total_loss = msssim + l1
+
+            total_loss.backward()
+            optimizer.step()
+
+            train_loss += total_loss.item()
+            msssim_loss += msssim.item()
+            l1_loss += l1.item()
+
+        average_loss = train_loss / len(train_loader)
+        avg_msssim_loss = msssim_loss / len(train_loader)
+        avg_l1_loss = l1_loss / len(train_loader)
+
+        model.eval()
+
+        msssim_val = 0.0
+        l1_val = 0.0
+        ssim_val = 0.0
+
+        sample_images = []
+        image_count = 0
+        with torch.no_grad():
+            for i, data in enumerate(val_loader, 0):
+                print(f'Validation Batch {i+1}/{len(val_loader)}')
+                ir_inputs_val, vi_inputs_val = data
+                ir_inputs_val, vi_inputs_val = ir_inputs_val.to(device), vi_inputs_val.to(device)
+
+                outputs_val = model(vi_inputs_val)
+
+                # TODO: Sample the images
+                if i % 15 == 0 and image_count < 10:
+                    ir_img = ir_inputs_val[0].cpu().numpy()
+                    output_img = outputs_val[0].cpu().numpy()
+                    vi_img = vi_inputs_val[0].cpu().numpy()
+                    sample_images.append((ir_img, output_img, vi_img))
+                    image_count += 1
+
+                ssim_val_value = loss_ssim(outputs_val, ir_inputs_val)
+                l1_val_value = loss_l1(outputs_val, ir_inputs_val)
+                msssim_val_value = loss_msssim(outputs_val, ir_inputs_val)
+
+                ssim_val += ssim_val_value.item()
+                l1_val += l1_val_value.item()
+                msssim_val += msssim_val_value.item()
+
+        # TODO: Save the images
+        processed_images = []
+        for ir_img, output_img, vi_img in sample_images:
+            ir_img = torch.tensor((ir_img * 255).astype(np.uint8))
+            vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
+            output_img = torch.tensor(((output_img + 1) / 2 * 255).astype(np.uint8))
+
+            processed_images.append(torch.cat((vi_img, ir_img, output_img), dim=2))
+
+        grid = vutils.make_grid(torch.stack(processed_images), nrow=1, padding=2, normalize=False, scale_each=False)
+        grid_np = grid.numpy()
+        grid_np = np.transpose(grid_np, (1, 2, 0))
+        grid_image = Image.fromarray(grid_np)
+        if not os.path.exists("result/test_images"):
+            os.makedirs("result/test_images")
+        grid_image.save(f"result/test_images/{now}_epoch_{epoch}.png")
+
+        avg_ssim_val = ssim_val / len(val_loader)
+        avg_msssim_val = msssim_val / len(val_loader)
+        avg_l1_val = l1_val / len(val_loader)
+
+        scheduler.step(average_loss)
+        
+        if avg_msssim_val > highest_msssim:
+            now = datetime.datetime.now().strftime("%Y-%m-%d")
+            highest_msssim = avg_msssim_val
+            highest_msssim_save_path = os.path.join("weight", f"LadleNet_highest_msssim_{now}.pth")
+            if not os.path.exists("weight"):
+                os.makedirs("weight")
+            state_dict_lowest_loss = model.state_dict()
+            metadata_lowest_loss = {'learning_rate': '0.001',
+                                    'batch_size': batch_size,
+                                    'num_epochs': '130',
+                                    'current_epoch': '130',
+                                    'optimizer_name': type(optimizer).__name__.lower(),
+                                    'loss_function': 'Loss_Content(MS-SSIM, L1)',
+                                    'MS-SSIM': np.round(avg_msssim_val, 6),
+                                    'L1': np.round(avg_l1_val, 6)}
+            
+            torch.save({'state_dict': state_dict_lowest_loss, 'metadata': metadata_lowest_loss}, highest_msssim_save_path)
+        
+        if (epoch+1) % save_step == 0 or (epoch + 1) == num_epochs:
+            now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            save_path = os.path.join("weight", f"{now}_LadleNet.pth")
+            if not os.path.exists("weight"):
+                os.makedirs("weight")
+            state_dict = model.state_dict()
+            metadata = {'learning_rate': '0.001',
+                        'batch_size': batch_size,
+                        'num_epochs': '120',
+                        'current_epoch': '120',
+                        'optimizer_name': type(optimizer).__name__.lower(),
+                        'loss_function': 'Loss_Content(MS-SSIM, L1)',
+                        'MS-SSIM': f"(train){np.round(avg_msssim_loss, 6)} / (val){np.round(avg_msssim_val, 6)}",
+                        'L1': f"(train){np.round(avg_l1_loss, 6)} / (val){np.round(avg_l1_val, 6)}"}
+
+            torch.save({'state_dict': state_dict, 'metadata': metadata}, save_path)
+            
+        end_time = time.time()
+        time_diff = end_time - start_time
+        hours, remainder = divmod(time_diff, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        if lr_record != scheduler.optimizer.param_groups[0]['lr']:
+            lr_record = scheduler.optimizer.param_groups[0]['lr']
+            print(f'--------------------Learning_Rate: {lr_record}--------------------')
+        
+        print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
+        file.write('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s\n'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
+
+    file.close()
