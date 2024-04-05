@@ -296,21 +296,31 @@ def collate_fn(batch):
     batch = list(filter(lambda x: x[0] is not None and x[1] is not None, batch))
     return torch.utils.data.dataloader.default_collate(batch)
 
-# accelerator = Accelerator()
+resume_path = 'weight/2021-05-06_16-00-00_LadleNet_plus.pth'
+resume_path = None
 
 batch_size = 20 # 56 
 num_epochs = 50
 learning_rate = 0.5
 save_step = int(num_epochs * 0.02)
 
+checkpoint = None
+epoch_resume = 0
+if resume_path != None:
+    checkpoint = torch.load(resume_path)
+    epoch_resume = checkpoint['epoch']
+    num_epochs = checkpoint['metadata']['num_epochs']
+    learning_rate = checkpoint['metadata']['learning_rate']
+    batch_size = checkpoint['metadata']['batch_size']
+    print(f"Resuming training from epoch {epoch_resume+1}")
+
 transform_pre = transforms.Compose([transforms.ToTensor()
                                   ,transforms.Resize((300,400))
                                   ,transforms.CenterCrop((192, 256))])
 
-# IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
-IR = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_thermal_train/data'
-# VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
-VI = '/home/anton/Desktop/SPRING24/VLR/project/Datasets/images_rgb_train/data'
+IR = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainB'
+VI = '/ocean/projects/cis220039p/ayanovic/vlr_project/sRGB-TIR/data/trainA'
+
 dataset = Dataset_creat(IR,VI,[transform_pre])
 
 train_ratio = 0.8
@@ -345,18 +355,17 @@ dir_name = os.path.dirname(file_name)
 if not os.path.exists(dir_name):
     os.makedirs(dir_name)
 
-file = open(file_name, "a")
-
 # sys.stdout = file
+if resume_path != None and checkpoint != None:
+    model.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    scheduler.load_state_dict(checkpoint['scheduler'])
+    print(f"Loaded model from {resume_path}")
+    
 
 torch.autograd.set_detect_anomaly(True)
 
-# train_loader, val_loader, model, optimizer = accelerator.prepare(train_loader,
-#                                                                           val_loader, 
-#                                                                           model, 
-#                                                                           optimizer)
-
-for epoch in range(num_epochs):
+for epoch in range(epoch_resume, num_epochs):
     print(f'Epoch {epoch+1}/{num_epochs}')
     start_time = time.time()
 
@@ -367,6 +376,7 @@ for epoch in range(num_epochs):
     l1_loss = 0.0
     
     for i, data in enumerate(train_loader, 0):
+        start_time_batch = time.time()
         print(f'Batch {i+1}/{len(train_loader)}')
         ir_inputs, vi_inputs = data
         ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
@@ -386,6 +396,8 @@ for epoch in range(num_epochs):
         train_loss += total_loss.item()
         msssim_loss += msssim.item()
         l1_loss += l1.item()
+        end_time_batch = time.time()
+        print(f'Batch {i+1}/{len(train_loader)} Time: {time_diff}s')
   
 
     average_loss = train_loss / len(train_loader)
@@ -465,8 +477,16 @@ for epoch in range(num_epochs):
                                 'MS-SSIM': np.round(avg_msssim_val, 6),
                                 'L1': np.round(avg_l1_val, 6),
                                 'lowest_val_loss': np.round(lowest_loss, 6)}
+        optimizer_lowest_loss = optimizer.state_dict()
+        scheduler_lowest_loss = scheduler.state_dict()
+        epoch_lowest_loss = epoch
         
-        torch.save({'state_dict': state_dict_lowest_loss, 'metadata': metadata_lowest_loss}, lowest_loss_save_path)
+        torch.save({'state_dict': state_dict_lowest_loss, 
+                    'metadata': metadata_lowest_loss, 
+                    'optimizer': optimizer_lowest_loss, 
+                    'scheduler': scheduler_lowest_loss, 
+                    'epoch': epoch_lowest_loss}, 
+                   lowest_loss_save_path)
     
     if (epoch + 1) % save_step == 0 or (epoch + 1) == num_epochs:
         now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -483,8 +503,16 @@ for epoch in range(num_epochs):
                     'MS-SSIM': f"(train){np.round(avg_msssim_loss, 6)} / (val){np.round(avg_msssim_val, 6)}",
                     'L1': f"(train){np.round(avg_l1_loss, 6)} / (val){np.round(avg_l1_val, 6)}",
                     'Total_Loss': f"(train){np.round(average_loss, 6)}"}
-
-        torch.save({'state_dict': state_dict, 'metadata': metadata}, save_path)
+        optimizer_state = optimizer.state_dict()
+        scheduler_state = scheduler.state_dict()
+        epoch_record = epoch
+        
+        torch.save({'state_dict': state_dict, 
+                    'metadata': metadata,
+                    'optimizer': optimizer_state,
+                    'scheduler': scheduler_state,
+                    'epoch': epoch_record},
+                     save_path)
         
     end_time = time.time()
     time_diff = end_time - start_time
@@ -495,8 +523,7 @@ for epoch in range(num_epochs):
         lr_record = scheduler.optimizer.param_groups[0]['lr']
         print(f'--------------------Learning_Rate: {lr_record}--------------------')
     
+    file = open(file_name, "a")
     print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
     file.write(f'Epoch [{epoch+1}/{num_epochs}], (Train_Loss) MS-SSIM:{avg_msssim_loss}, L1:{avg_l1_loss}, Total:{average_loss}   (Val_Value) MS-SSIM:{avg_msssim_val}, SSIM:{avg_ssim_val}, L1:{avg_l1_val}, Time: {int(hours)}h-{int(minutes)}m-{int(seconds)}s\n')
-    
-    
-file.close()
+    file.close()
