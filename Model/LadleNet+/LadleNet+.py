@@ -296,8 +296,8 @@ def collate_fn(batch):
     batch = list(filter(lambda x: x[0] is not None and x[1] is not None, batch))
     return torch.utils.data.dataloader.default_collate(batch)
 
-resume_path = 'weight/2021-05-06_16-00-00_LadleNet_plus.pth'
-resume_path = None
+resume_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/weight/2024-04-06_09-05-00_LadleNet_plus.pth'
+# resume_path = None
 
 batch_size = 20 # 56 
 num_epochs = 50
