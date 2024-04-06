@@ -375,9 +375,11 @@ for epoch in range(epoch_resume, num_epochs):
     msssim_loss = 0.0
     l1_loss = 0.0
     
+    total_batch = len(train_loader)
+    total_val_batch = len(val_loader)
     for i, data in enumerate(train_loader, 0):
         start_time_batch = time.time()
-        print(f'Batch {i+1}/{len(train_loader)}')
+        print(f'Batch {i+1}/{total_batch}')
         ir_inputs, vi_inputs = data
         ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
 
@@ -397,7 +399,8 @@ for epoch in range(epoch_resume, num_epochs):
         msssim_loss += msssim.item()
         l1_loss += l1.item()
         end_time_batch = time.time()
-        print(f'Batch {i+1}/{len(train_loader)} Time: {time_diff}s')
+        time_diff = end_time_batch - start_time_batch
+        print(f'Time: {time_diff}s')
   
 
     average_loss = train_loss / len(train_loader)
@@ -415,7 +418,7 @@ for epoch in range(epoch_resume, num_epochs):
     image_count = 0
     with torch.no_grad():
         for i, data in enumerate(val_loader, 0):
-            print(f'Validation Batch {i+1}/{len(val_loader)}')
+            print(f'Validation Batch {i+1}/{total_val_batch}')
             ir_inputs_val, vi_inputs_val = data
             ir_inputs_val, vi_inputs_val = ir_inputs_val.to(device), vi_inputs_val.to(device)
 
