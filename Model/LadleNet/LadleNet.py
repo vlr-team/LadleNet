@@ -369,10 +369,23 @@ def collate_fn(batch):
     return torch.utils.data.dataloader.default_collate(batch)
 
 if __name__ == '__main__':
+    resume_path = 'weight/2021-05-06_16-00-00_LadleNet_plus.pth'
+    resume_path = None
+
     batch_size = 5  # 40
     num_epochs = 30
     learning_rate = 0.1
     save_step = int(num_epochs * 0.1)
+    
+    checkpoint = None
+    epoch_resume = 0
+    if resume_path != None:
+        checkpoint = torch.load(resume_path)
+        epoch_resume = checkpoint['epoch']
+        num_epochs = checkpoint['metadata']['num_epochs']
+        learning_rate = checkpoint['metadata']['learning_rate']
+        batch_size = checkpoint['metadata']['batch_size']
+        print(f"Resuming training from epoch {epoch_resume+1}")
 
     transform_pre = transforms.Compose([transforms.ToTensor()
                                     ,transforms.Resize((300,400))
@@ -418,9 +431,13 @@ if __name__ == '__main__':
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
-    file = open(file_name, "a")
     # TODO: Redirect remove the print statement
     # sys.stdout = file
+    if resume_path != None and checkpoint != None:
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        print(f"Loaded model from {resume_path}")
 
     torch.autograd.set_detect_anomaly(True)
 
@@ -435,6 +452,7 @@ if __name__ == '__main__':
         l1_loss = 0.0
         
         for i, data in enumerate(train_loader, 0):
+            start_time_batch = time.time()
             print(f'Batch {i+1}/{len(train_loader)}')
             ir_inputs, vi_inputs = data
             ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
@@ -453,6 +471,9 @@ if __name__ == '__main__':
             train_loss += total_loss.item()
             msssim_loss += msssim.item()
             l1_loss += l1.item()
+            end_time_batch = time.time()
+            time_diff = end_time_batch - start_time_batch
+            print(f'Batch {i+1}/{len(train_loader)} Time: {time_diff}s')
 
         average_loss = train_loss / len(train_loader)
         avg_msssim_loss = msssim_loss / len(train_loader)
@@ -492,6 +513,7 @@ if __name__ == '__main__':
 
         # TODO: Save the images
         processed_images = []
+        print("Processing test image samples...")
         for ir_img, output_img, vi_img in sample_images:
             ir_img = torch.tensor((ir_img * 255).astype(np.uint8))
             vi_img = torch.tensor((vi_img * 255).astype(np.uint8))
@@ -505,6 +527,7 @@ if __name__ == '__main__':
         grid_image = Image.fromarray(grid_np)
         if not os.path.exists("result/test_images"):
             os.makedirs("result/test_images")
+        now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         grid_image.save(f"result/test_images/{now}_epoch_{epoch}.png")
 
         avg_ssim_val = ssim_val / len(val_loader)
@@ -528,9 +551,14 @@ if __name__ == '__main__':
                                     'loss_function': 'Loss_Content(MS-SSIM, L1)',
                                     'MS-SSIM': np.round(avg_msssim_val, 6),
                                     'L1': np.round(avg_l1_val, 6)}
-            
-            torch.save({'state_dict': state_dict_lowest_loss, 'metadata': metadata_lowest_loss}, highest_msssim_save_path)
-        
+            optimizer_lowest_loss = optimizer.state_dict()
+            scheduler_lowest_loss = scheduler.state_dict()
+            epoch_lowest_loss = epoch
+
+            torch.save({'state_dict': state_dict_lowest_loss, 'metadata': metadata_lowest_loss,
+                        'optimizer': optimizer_lowest_loss, 'scheduler': scheduler_lowest_loss,
+                        'epoch': epoch_lowest_loss}, highest_msssim_save_path)
+
         if (epoch+1) % save_step == 0 or (epoch + 1) == num_epochs:
             now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             save_path = os.path.join("weight", f"{now}_LadleNet.pth")
@@ -545,8 +573,12 @@ if __name__ == '__main__':
                         'loss_function': 'Loss_Content(MS-SSIM, L1)',
                         'MS-SSIM': f"(train){np.round(avg_msssim_loss, 6)} / (val){np.round(avg_msssim_val, 6)}",
                         'L1': f"(train){np.round(avg_l1_loss, 6)} / (val){np.round(avg_l1_val, 6)}"}
-
-            torch.save({'state_dict': state_dict, 'metadata': metadata}, save_path)
+            optimizer_state = optimizer.state_dict()
+            scheduler_state = scheduler.state_dict()
+            epoch_record = epoch
+            torch.save({'state_dict': state_dict, 'metadata': metadata,
+                        'optimizer': optimizer_state, 'scheduler': scheduler_state,
+                        'epoch': epoch_record}, save_path)
             
         end_time = time.time()
         time_diff = end_time - start_time
@@ -557,7 +589,7 @@ if __name__ == '__main__':
             lr_record = scheduler.optimizer.param_groups[0]['lr']
             print(f'--------------------Learning_Rate: {lr_record}--------------------')
         
+        file = open(file_name, "a")
         print('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
         file.write('Epoch [{}/{}], (Train_Loss) MS-SSIM:{:.4f}, L1:{:.4f}, Total:{:.4f}   (Val_Value) MS-SSIM:{:.4f}, SSIM:{:.4f}, L1:{:.4f}, Time: {}h-{}m-{}s\n'.format(epoch+1, num_epochs, avg_msssim_loss, avg_l1_loss, average_loss, avg_msssim_val, avg_ssim_val, avg_l1_val, int(hours), int(minutes), int(seconds)))
-
-    file.close()
+        file.close()
