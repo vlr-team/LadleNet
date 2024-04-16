@@ -48,8 +48,10 @@ from DeepLabV3s import network  #downloaded from https://github.com/VainF/DeepLa
 # https://drive.google.com/file/d/1t7TC8mxQaFECt4jutdq_NMnWxdm6B-Nb/view
 import re
 from PIL import Image
-from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True  # Added by me to avoid PIL error
+# from PIL import ImageFile
+# ImageFile.LOAD_TRUNCATED_IMAGES = True  # Added by me to avoid PIL error
+
+from normalizer import freibeg_crop_ir, freibeg_crop_rgb, normalize
 
 class LadleNet_plus(nn.Module):
     def __init__(self):
@@ -269,8 +271,9 @@ class Dataset_creat(Dataset):
             if img_IR is None:
                 print(f"Failed to load image {IR_dic}")
                 return (None, None)
-            img_IR = img_as_ubyte(exposure.rescale_intensity(img_IR))
-            img_IR = cv2.equalizeHist(img_IR)
+            # img_IR = img_as_ubyte(exposure.rescale_intensity(img_IR))
+            # img_IR = cv2.equalizeHist(img_IR)
+            img_IR = normalize(freibeg_crop_ir(img_IR))
             img_IR = cv2.merge((img_IR, img_IR, img_IR))
         except Exception as e:
             print(f"Failed to load image {IR_dic}: {e}")
@@ -281,7 +284,8 @@ class Dataset_creat(Dataset):
             if img_VI is None or img_VI.shape[0] == 0:
                 print(f"Failed to load image {VI_dic}")
                 return (None, None)
-            img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            # img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            img_VI = freibeg_crop_rgb(img_VI)
         except Exception as e:
             print(f"Failed to load image {VI_dic}: {e}")
             return (None, None)
@@ -302,8 +306,8 @@ def collate_fn(batch):
     return torch.utils.data.dataloader.default_collate(batch)
 
 if __name__ == '__main__':
-    resume_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/weight/2024-04-09_23-24-21_LadleNet_plus.pth'
-    # resume_path = None
+    # resume_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/weight/2024-04-09_23-24-21_LadleNet_plus.pth'
+    resume_path = None
 
     batch_size = 20 # 56 
     num_epochs = 50
