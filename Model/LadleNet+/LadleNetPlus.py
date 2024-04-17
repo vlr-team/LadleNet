@@ -307,8 +307,8 @@ def collate_fn(batch):
     return torch.utils.data.dataloader.default_collate(batch)
 
 if __name__ == '__main__':
-    # resume_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/weight/2024-04-09_23-24-21_LadleNet_plus.pth'
-    resume_path = None
+    resume_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/weight/2024-04-17_02-54-49_LadleNet_plus.pth'
+    # resume_path = None
 
     batch_size = 20 # 56 
     num_epochs = 50
