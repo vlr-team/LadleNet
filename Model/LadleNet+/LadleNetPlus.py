@@ -286,6 +286,7 @@ class Dataset_creat(Dataset):
                 return (None, None)
             # img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             img_VI = freibeg_crop_rgb(img_VI)
+            img_VI = cv2.cvtColor(img_VI, cv2.COLOR_BGR2RGB)
         except Exception as e:
             print(f"Failed to load image {VI_dic}: {e}")
             return (None, None)
