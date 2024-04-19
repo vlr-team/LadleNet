@@ -154,6 +154,10 @@ class LadleNet_plus(nn.Module):
         return model
     
     def forward(self, x):
+        #self.DeepLab.eval()
+        #print(x.shape)
+        #print(x.dtype)
+        #print(x.shape)
         deeplab_v3s = self.DeepLab(x)
         
         layer_trans = self.layer_trans(deeplab_v3s)
@@ -307,7 +311,7 @@ def collate_fn(batch):
     return torch.utils.data.dataloader.default_collate(batch)
 
 if __name__ == '__main__':
-    resume_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/weight/2024-04-17_02-54-49_LadleNet_plus.pth'
+    resume_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/weight/2024-04-17_21-53-17_LadleNet_plus.pth'
     # resume_path = None
 
     batch_size = 20 # 56 
