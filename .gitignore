@@ -2,3 +2,5 @@
 /Model/LadleNet+/DeepLabV3s
 **/result
 **/weight
+**/result_new_norm
+**/result_old_norm

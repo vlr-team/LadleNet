@@ -275,9 +275,9 @@ class Dataset_creat(Dataset):
             if img_IR is None:
                 print(f"Failed to load image {IR_dic}")
                 return (None, None)
-            # img_IR = img_as_ubyte(exposure.rescale_intensity(img_IR))
-            # img_IR = cv2.equalizeHist(img_IR)
-            img_IR = normalize(freibeg_crop_ir(img_IR))
+            img_IR = img_as_ubyte(exposure.rescale_intensity(img_IR))
+            img_IR = freibeg_crop_ir(cv2.equalizeHist(img_IR))
+            # img_IR = normalize(freibeg_crop_ir(img_IR))
             img_IR = cv2.merge((img_IR, img_IR, img_IR))
         except Exception as e:
             print(f"Failed to load image {IR_dic}: {e}")

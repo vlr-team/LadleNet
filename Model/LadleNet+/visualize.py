@@ -54,7 +54,7 @@ if __name__ == '__main__':
 
     val_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True, collate_fn=collate_fn)
 
-    root_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/result'
+    root_path = '/ocean/projects/cis220039p/ayanovic/vlr_project/LadleNet/Model/LadleNet+/result_old_norm'
     output_path = os.path.join(root_path, 'outputs')
     gt_path = os.path.join(root_path, 'gt')
     input_path = os.path.join(root_path, 'inputs')
@@ -68,6 +68,8 @@ if __name__ == '__main__':
 
     # Image visualization
     print("Visualizing images")
+    processed_images = []
+    image_count = 0
     for n, (ir_inputs, vi_inputs) in enumerate(val_loader):
         ir_inputs, vi_inputs = ir_inputs.to(device), vi_inputs.to(device)
         model.eval()
@@ -94,10 +96,16 @@ if __name__ == '__main__':
 
             print(f"Saving {ir_img.shape[0]} images")
             for i in range(ir_img.shape[0]):
-                print(f"Saving image {i*(n+1)}")
+                print(f"Saving image {n*batch_size + i}")
                 ir_image = ir_img[i]
                 vi_image = vi_img[i]
                 output_image = output_img[i]
+
+                if i % 5 == 0 and image_count < 5:
+                    ir_image = np.resize(ir_image, (output_image.shape[0], output_image.shape[1], output_image.shape[2]))
+                    vi_image = np.resize(vi_image, (output_image.shape[0], output_image.shape[1], output_image.shape[2]))
+                    processed_images.append(np.concatenate((ir_image, output_image, vi_image), axis=2))
+                    image_count += 1
 
                 ir_image = np.transpose(ir_image, (1, 2, 0))
                 vi_image = np.transpose(vi_image, (1, 2, 0))
@@ -107,11 +115,18 @@ if __name__ == '__main__':
                 vi_image = cv2.cvtColor(vi_image, cv2.COLOR_RGB2BGR)
                 output_image = cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR)
 
-                ir_image_path = os.path.join(gt_path, f"gt_{i*(n+1)}.png")
-                vi_image_path = os.path.join(input_path, f"input_{i*(n+1)}.png")
-                output_image_path = os.path.join(output_path, f"output_{i*(n+1)}.png")
+                ir_image_path = os.path.join(gt_path, f"gt_{n*batch_size + i}.png")
+                vi_image_path = os.path.join(input_path, f"input_{n*batch_size + i}.png")
+                output_image_path = os.path.join(output_path, f"output_{n*batch_size + i}.png")
 
                 cv2.imwrite(ir_image_path, ir_image)
                 cv2.imwrite(vi_image_path, vi_image)
                 cv2.imwrite(output_image_path, output_image)
+
+    print("Processing test image samples...")
+    grid = vutils.make_grid(torch.tensor(np.stack(processed_images)), nrow=1, padding=2, normalize=False, scale_each=False)
+    grid_np = grid.numpy()
+    grid_np = np.transpose(grid_np, (1, 2, 0))  # Convert from (C, H, W) to (H, W, C)
+    grid_image = Image.fromarray(grid_np)
+    grid_image.save(os.path.join(root_path, "test_images.png"))
     print("Saved")
